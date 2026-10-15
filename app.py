@@ -21,17 +21,10 @@ st.write(
 st.divider()
 
 # ---------------- EXCEL UPLOAD ----------------
-uploaded_file = st.file_uploader(
-    "Upload your Water Quality Excel File",
-    type=["xlsx", "xls"]
-)
-
-if uploaded_file is None:
-    st.info("Please upload your Excel file to continue.")
-    st.stop()
+excel_file = "water_quality_data.xlsx"
 
 try:
-    df = pd.read_excel(uploaded_file)
+    df = pd.read_excel(excel_file)
 except Exception as e:
     st.error(f"Unable to read Excel file: {e}")
     st.stop()
