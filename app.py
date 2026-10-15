@@ -1,208 +1,295 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
 
+# ---------------- PAGE SETTINGS ----------------
 st.set_page_config(
-    page_title="Water Quality Monitoring",
+    page_title="Water Quality Prediction",
     page_icon="💧",
     layout="wide"
 )
 
-st.title("💧 Water Quality Monitoring & Prediction")
-st.write("Krishna and Panchganga River Analysis")
+st.title("💧 Water Quality Monitoring and Prediction")
+st.write(
+    "Machine Learning-based analysis and future prediction "
+    "of Krishna and Panchganga River water quality."
+)
 
+st.divider()
+
+# ---------------- EXCEL UPLOAD ----------------
 uploaded_file = st.file_uploader(
-    "Upload your Water Quality Excel file",
+    "Upload your Water Quality Excel File",
     type=["xlsx", "xls"]
 )
 
-parameters = {
-    "pH": ["pH_Krishna", "pH _Panchgaga"],
-    "Turbidity": ["Turbidity_Krishna", "Turbidity_Panchgaga"],
-    "TDS": ["TDS_Krishna", "TDS_Panchgaga"],
-    "Chloride": ["Chloride_Krishna", "Chloride_Panchgaga"],
-    "Alkalinity": ["Alkalinity_Krishna", "Alkalinity_Panchgaga"],
-    "Hardness": ["Hardness_Krishna", "Hardness_Panchgaga"]
-}
+if uploaded_file is None:
+    st.info("Please upload your Excel file to continue.")
+    st.stop()
 
-if uploaded_file is not None:
+try:
     df = pd.read_excel(uploaded_file)
+except Exception as e:
+    st.error(f"Unable to read Excel file: {e}")
+    st.stop()
 
-   
-# Clean column names and handle Date capitalization/spaces
+# Clean column names
 df.columns = df.columns.astype(str).str.strip()
 
+# Find Date column, ignoring capitalization and spaces
 date_col = next(
-    (col for col in df.columns if col.lower().strip() == "date"),
+    (col for col in df.columns if col.strip().lower() == "date"),
     None
 )
 
 if date_col is None:
-    st.error("Date column not found. Please check your Excel file.")
+    st.error("Date column not found in the Excel file.")
     st.write("Available columns:", df.columns.tolist())
+    st.info("Rename the date column to Date in your Excel file.")
     st.stop()
 
+# Standardize Date column
 df = df.rename(columns={date_col: "Date"})
-df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+df["Date"] = pd.to_datetime(
+    df["Date"], errors="coerce", dayfirst=True
+)
 df = df.dropna(subset=["Date"])
+df = df.sort_values("Date").reset_index(drop=True)
 
+if df.empty:
+    st.error("No valid dates were found in the Excel file.")
+    st.stop()
 
-    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    df = df.dropna(subset=["Date"]).sort_values("Date")
+# ---------------- PARAMETERS ----------------
+parameters = {
+    "pH": ("pH_Krishna", "pH _Panchgaga"),
+    "Turbidity": ("Turbidity_Krishna", "Turbidity_Panchgaga"),
+    "TDS": ("TDS_Krishna", "TDS_Panchgaga"),
+    "Chloride": ("Chloride_Krishna", "Chloride_Panchgaga"),
+    "Alkalinity": ("Alkalinity_Krishna", "Alkalinity_Panchgaga"),
+    "Total Hardness": ("Hardness_Krishna", "Hardness_Panchgaga")
+}
 
+# ---------------- DATA OVERVIEW ----------------
+st.header("1. Uploaded Data Overview")
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Total Readings", len(df))
+c2.metric("First Reading", df["Date"].min().strftime("%d-%m-%Y"))
+c3.metric("Latest Reading", df["Date"].max().strftime("%d-%m-%Y"))
+
+with st.expander("View Uploaded Excel Data"):
+    st.dataframe(df, use_container_width=True)
+
+# ---------------- USER SELECTION ----------------
+st.header("2. Select Analysis Options")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
     parameter = st.selectbox(
         "Select Water Quality Parameter",
         list(parameters.keys())
     )
 
+with col2:
     river = st.selectbox(
         "Select River",
-        ["Both Rivers", "Krishna", "Panchganga"]
+        ["Krishna", "Panchganga"]
     )
 
+with col3:
     years = st.selectbox(
-        "Prediction Period",
+        "Future Prediction Period",
         [1, 2],
-        index=1,
-        format_func=lambda x: f"{x} Year{'s' if x > 1 else ''}"
+        format_func=lambda x: f"{x} Year" if x == 1 else f"{x} Years"
     )
 
-    selected_columns = parameters[parameter]
+krishna_col, panchganga_col = parameters[parameter]
+selected_col = (
+    krishna_col if river == "Krishna" else panchganga_col
+)
 
-    river_columns = []
-    if river in ["Both Rivers", "Krishna"]:
-        river_columns.append((selected_columns[0], "Krishna"))
-    if river in ["Both Rivers", "Panchganga"]:
-        river_columns.append((selected_columns[1], "Panchganga"))
+if selected_col not in df.columns:
+    st.error(
+        f"Column '{selected_col}' is missing from your Excel file. "
+        "Please check the spelling of your column names."
+    )
+    st.write("Available columns:", df.columns.tolist())
+    st.stop()
 
-    st.subheader(f"{parameter}: Actual Readings")
+# Convert readings to numeric values
+df[selected_col] = pd.to_numeric(df[selected_col], errors="coerce")
+valid_df = df[["Date", selected_col]].dropna().copy()
 
-    fig, ax = plt.subplots(figsize=(12, 5))
+if valid_df.empty:
+    st.error("No valid numeric readings found for this selection.")
+    st.stop()
 
-    for column, river_name in river_columns:
-        if column not in df.columns:
-            st.warning(f"Column not found: {column}")
-            continue
+# ---------------- MONTHLY DATA ----------------
+monthly = (
+    valid_df.set_index("Date")[selected_col]
+    .resample("MS")
+    .mean()
+    .dropna()
+)
 
-        ax.plot(
-            df["Date"], pd.to_numeric(df[column], errors="coerce"),
-            marker="o", markersize=3, label=f"{river_name} Actual"
-        )
+if len(monthly) < 6:
+    st.error(
+        "At least 6 months of valid readings are needed "
+        "to create a prediction."
+    )
+    st.stop()
 
-    ax.set_xlabel("Date")
-    ax.set_ylabel(parameter)
-    ax.grid(True)
-    ax.legend()
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+st.subheader(f"{parameter} — {river} River")
+st.caption(
+    "The graph uses monthly average values from your uploaded dataset."
+)
 
-    st.subheader(f"{parameter}: Future Prediction")
+# ---------------- ACTUAL READINGS GRAPH ----------------
+st.header("3. Historical Water Quality Trend")
 
-    forecast_fig, forecast_ax = plt.subplots(figsize=(12, 5))
-    prediction_tables = []
+fig1, ax1 = plt.subplots(figsize=(11, 4))
+ax1.plot(
+    monthly.index,
+    monthly.values,
+    marker="o",
+    linewidth=2,
+    label="Historical Monthly Average"
+)
+ax1.set_xlabel("Date")
+ax1.set_ylabel(parameter)
+ax1.set_title(f"Historical {parameter} Readings — {river} River")
+ax1.grid(True, alpha=0.3)
+ax1.legend()
+fig1.autofmt_xdate()
+st.pyplot(fig1)
+plt.close(fig1)
 
-    for column, river_name in river_columns:
-        if column not in df.columns:
-            continue
+# ---------------- MACHINE LEARNING MODEL ----------------
+st.header("4. Machine Learning Prediction")
 
-        series = df.set_index("Date")[column]
-        series = pd.to_numeric(series, errors="coerce").dropna()
+st.write(
+    "Algorithm used: **Random Forest Regressor**. "
+    "The model learns from previous monthly readings "
+    "to estimate future values."
+)
 
-        monthly = series.resample("MS").mean()
-        monthly = monthly.interpolate(method="time").ffill().bfill()
-        monthly = monthly.dropna()
+# Create lag features from the historical monthly series
+series = monthly.astype(float).copy()
 
-        if len(monthly) < 6:
-            st.warning(
-                f"Not enough monthly readings for {river_name}."
-            )
-            continue
+training = pd.DataFrame({
+    "lag1": series.shift(1),
+    "lag2": series.shift(2),
+    "lag3": series.shift(3),
+    "target": series
+}).dropna()
 
-        values = monthly.to_numpy(dtype=float)
+if len(training) < 3:
+    st.error("There is not enough historical data to train the model.")
+    st.stop()
 
-        training = pd.DataFrame({
-            "lag1": values[2:-1],
-            "lag2": values[1:-2],
-            "lag3": values[:-3],
-            "target": values[3:]
-        })
+X = training[["lag1", "lag2", "lag3"]]
+y = training["target"]
 
-        if training.empty:
-            continue
+model = RandomForestRegressor(
+    n_estimators=200,
+    random_state=42
+)
+model.fit(X, y)
 
-        model = RandomForestRegressor(
-            n_estimators=200,
-            random_state=42
-        )
+# Predict one month at a time using the latest 3 values
+future_dates = pd.date_range(
+    start=series.index[-1] + pd.offsets.MonthBegin(1),
+    periods=years * 12,
+    freq="MS"
+)
 
-        model.fit(
-            training[["lag1", "lag2", "lag3"]],
-            training["target"]
-        )
+history = list(series.values)
+predictions = []
 
-        history = list(values)
-        predictions = []
+for future_date in future_dates:
+    features = np.array([[
+        history[-1],
+        history[-2],
+        history[-3]
+    ]])
 
-        for _ in range(12 * years):
-            features = [[history[-1], history[-2], history[-3]]]
-            predicted_value = float(model.predict(features)[0])
-            predictions.append(predicted_value)
-            history.append(predicted_value)
+    prediction = float(model.predict(features)[0])
+    predictions.append(prediction)
+    history.append(prediction)
 
-        future_dates = pd.date_range(
-            start=monthly.index[-1] + pd.offsets.MonthBegin(1),
-            periods=12 * years,
-            freq="MS"
-        )
+forecast = pd.DataFrame({
+    "Date": future_dates,
+    "Predicted Value": predictions
+})
 
-        forecast_ax.plot(
-            future_dates,
-            predictions,
-            marker="o",
-            markersize=3,
-            label=f"{river_name} Predicted"
-        )
+# ---------------- ACTUAL VS FUTURE GRAPH ----------------
+st.header("5. Historical and Future Prediction Graph")
 
-        prediction_tables.append(
-            pd.DataFrame({
-                "Date": future_dates,
-                "River": river_name,
-                "Parameter": parameter,
-                "Predicted Value": predictions
-            })
-        )
+fig2, ax2 = plt.subplots(figsize=(11, 5))
 
-    forecast_ax.set_xlabel("Date")
-    forecast_ax.set_ylabel(parameter)
-    forecast_ax.grid(True)
-    forecast_ax.legend()
-    forecast_fig.tight_layout()
-    st.pyplot(forecast_fig)
-    plt.close(forecast_fig)
+ax2.plot(
+    series.index,
+    series.values,
+    marker="o",
+    label="Historical Values"
+)
 
-    if prediction_tables:
-        prediction_df = pd.concat(
-            prediction_tables, ignore_index=True
-        )
+ax2.plot(
+    forecast["Date"],
+    forecast["Predicted Value"],
+    marker="o",
+    linestyle="--",
+    label="Predicted Values"
+)
 
-        st.subheader("Predicted Values")
-        st.dataframe(prediction_df, use_container_width=True)
+ax2.axvline(
+    series.index[-1],
+    linestyle=":",
+    label="Prediction Starts"
+)
 
-        st.download_button(
-            "Download Predictions as CSV",
-            prediction_df.to_csv(index=False).encode("utf-8"),
-            file_name=f"{parameter.lower()}_predictions.csv",
-            mime="text/csv"
-        )
+ax2.set_xlabel("Date")
+ax2.set_ylabel(parameter)
+ax2.set_title(
+    f"{parameter} — {river} River: Historical and Future Trend"
+)
+ax2.grid(True, alpha=0.3)
+ax2.legend()
+fig2.autofmt_xdate()
+st.pyplot(fig2)
+plt.close(fig2)
 
-        st.caption(
-            "These are model-based estimates, not guaranteed future "
-            "measurements. Validate model accuracy before using them "
-            "for water safety decisions."
-        )
+# ---------------- PREDICTION TABLE ----------------
+st.header("6. Predicted Values")
 
-else:
-    st.info("Upload your Excel file to view graphs and predictions.")
+forecast_display = forecast.copy()
+forecast_display["Date"] = forecast_display["Date"].dt.strftime("%B %Y")
+forecast_display["Predicted Value"] = (
+    forecast_display["Predicted Value"].round(3)
+)
+
+st.dataframe(forecast_display, use_container_width=True)
+
+csv = forecast.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    label="Download Predictions as CSV",
+    data=csv,
+    file_name=f"{river}_{parameter}_predictions.csv",
+    mime="text/csv"
+)
+
+st.caption(
+    "Note: These are model-based estimates, not guaranteed future readings. "
+    "The predictions use historical patterns only and should not be treated "
+    "as proof that water is safe or unsafe to drink."
+)
+
+st.divider()
+st.write("Developed for the Water Quality Monitoring project.")
+
