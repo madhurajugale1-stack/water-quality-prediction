@@ -30,9 +30,24 @@ parameters = {
 if uploaded_file is not None:
     df = pd.read_excel(uploaded_file)
 
-    if "Date" not in df.columns:
-        st.error("Your Excel file must contain a Date column.")
-        st.stop()
+   
+# Clean column names and handle Date capitalization/spaces
+df.columns = df.columns.astype(str).str.strip()
+
+date_col = next(
+    (col for col in df.columns if col.lower().strip() == "date"),
+    None
+)
+
+if date_col is None:
+    st.error("Date column not found. Please check your Excel file.")
+    st.write("Available columns:", df.columns.tolist())
+    st.stop()
+
+df = df.rename(columns={date_col: "Date"})
+df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+df = df.dropna(subset=["Date"])
+
 
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df = df.dropna(subset=["Date"]).sort_values("Date")
